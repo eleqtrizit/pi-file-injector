@@ -1,95 +1,162 @@
 /**
- * File injector extension.
+ * File and command injector extension.
  *
- * Injects the full contents of a file into the user prompt at send time.
- * Any text matching `#@path` is replaced by a `<file>` block containing the
- * file contents. Paths containing spaces use the quoted form: `#@"my file.txt"`. The agent never sees the raw `#@` reference; the transformed
- * text is what goes into conversation history.
+ * Injects content into the user prompt at send time:
+ * - `#@path` or `#@"my file.txt"` is replaced by a `<file>` block containing
+ *   the file contents.
+ * - `` #`some command` `` is replaced by a `<command>` block containing the
+ *   command and its output.
+ *
+ * The agent never sees the raw markers; the transformed text is what goes
+ * into conversation history.
  *
  * Example:
- *   Input:  "Look over #@notes.md for typos"
- *   Sent:   "Look over\n<file path="notes.md">...contents...</file>\nfor typos"
+ *   Input:  "Look over #@notes.md and run #`git status`"
+ *   Sent:   "Look over <file path="notes.md">...</file> and run
+ *            <command>git status</command><output>...</output>"
  *
- * If a referenced file does not exist, the send is cancelled with an error
- * notification; the user can press arrow-up to edit the message and retry.
+ * If a file does not exist or a command fails, the send is cancelled with an
+ * error notification; the user can press arrow-up to edit the message and
+ * retry.
  */
+import { exec } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
+import { promisify } from "node:util";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+const execAsync = promisify(exec);
 
 /** Marker that starts a file reference in the user's input. */
 const REFERENCE_PREFIX = "#@";
 
+/** Marker that starts a command reference in the user's input. */
+const COMMAND_PREFIX = "#`";
+
+/** Maximum time a command may run before it is killed. */
+const COMMAND_TIMEOUT_MS = 30_000;
+
+/** Maximum captured command output in bytes before the process is killed. */
+const COMMAND_MAX_BUFFER = 10 * 1024 * 1024;
+
 /**
- * Matches a single file reference, e.g. `#@src/utils/foo.ts` or
- * `#@"my file.txt"` (quoted form for paths containing spaces).
- * The path is capture group 1 (quoted) or 2 (unquoted).
+ * Matches one injection token:
+ * - `#@"path with spaces"` (group 1) or `#@path` (group 2): file reference
+ * - `` #`command` `` (group 3): command reference (backticks not allowed
+ *   inside the command; escape-free nesting is not supported)
  */
-const REFERENCE_PATTERN = /#@"([^"]+)"|#@(\S+)/g;
+const TOKEN_PATTERN = /#@"([^"]+)"|#@(\S+)|#`([^`]+)`/g;
 
 /** Wraps file contents in a `<file>` block for the LLM. */
 function renderFileBlock(path: string, contents: string): string {
 	return `<file path="${path}">\n${contents}\n</file>`;
 }
 
-/** Type returned by the injection step for each parsed reference. */
-interface InjectionResult {
-	text: string | null;
-	missing: string[];
+/** Wraps a command and its output in `<command>`/`<output>` blocks. */
+function renderCommandBlock(command: string, output: string): string {
+	const trimmed = output.length > 0 && !output.endsWith("\n") ? `${output}\n` : output;
+	return `<command>${command}</command>\n<output>\n${trimmed}</output>`;
+}
+
+/** Resolves a file reference to its contents, or null when unreadable. */
+function loadFile(rawPath: string, cwd: string): Promise<string | null> {
+	const absolute = isAbsolute(rawPath) ? rawPath : resolve(cwd, rawPath);
+	return readFile(absolute, "utf8").catch(() => null);
 }
 
 /**
- * Replaces every `#@path` reference in the input with its file contents.
- *
- * Returns `null` as `text` together with the list of missing paths when at
- * least one file cannot be read, so callers can fail the whole prompt.
+ * Runs a command in `cwd` and returns its combined output.
+ * Rejects with an error message when the command fails, times out, or
+ * cannot be spawned.
  */
-export async function injectFiles(text: string, cwd: string): Promise<InjectionResult> {
-	const matches = [...text.matchAll(REFERENCE_PATTERN)];
+async function runCommand(command: string, cwd: string): Promise<string> {
+	try {
+		const { stdout, stderr } = await execAsync(command, {
+			cwd,
+			timeout: COMMAND_TIMEOUT_MS,
+			maxBuffer: COMMAND_MAX_BUFFER,
+		});
+		return stderr.trim().length > 0 ? `${stdout}\n${stderr}` : stdout;
+	} catch (error) {
+		const err = error as { message?: string; killed?: boolean; stderr?: string };
+		const reason = err.killed
+			? `timed out after ${COMMAND_TIMEOUT_MS}ms`
+			: (err.stderr?.trim() || err.message || "unknown error");
+		throw new Error(`Command failed: ${command}\n${reason}`);
+	}
+}
+
+/** Type returned by the token expansion step. */
+interface ExpansionResult {
+	text: string | null;
+	errors: string[];
+}
+
+/**
+ * Replaces every file and command reference in the input with injected
+ * content.
+ *
+ * Returns `null` as `text` together with the list of errors when at least
+ * one reference cannot be resolved, so callers can fail the whole prompt.
+ */
+export async function expandTokens(text: string, cwd: string): Promise<ExpansionResult> {
+	const matches = [...text.matchAll(TOKEN_PATTERN)];
 	if (matches.length === 0) {
-		return { text, missing: [] };
+		return { text, errors: [] };
 	}
 
-	// Deduplicate read attempts for repeated references to the same path.
-	const cache = new Map<string, Promise<string | null>>();
-	const load = (rawPath: string): Promise<string | null> => {
-		let entry = cache.get(rawPath);
-		if (!entry) {
-			const absolute = isAbsolute(rawPath) ? rawPath : resolve(cwd, rawPath);
-			entry = readFile(absolute, "utf8").catch(() => null);
-			cache.set(rawPath, entry);
-		}
-		return entry;
-	};
+	// Resolve every token up front so unrelated tokens still get read even
+	// when one fails, and all errors are reported at once.
+	const resolved = await Promise.all(
+		matches.map(async (match): Promise<{ ok: string } | { error: string }> => {
+			const [raw, quotedPath, unquotedPath, command] = match;
+			if (quotedPath !== undefined || unquotedPath !== undefined) {
+				const path = quotedPath ?? unquotedPath;
+				const contents = await loadFile(path, cwd);
+				if (contents === null) {
+					return { error: `File not found: ${path}` };
+				}
+				return { ok: renderFileBlock(path, contents) };
+			}
+			if (command !== undefined) {
+				try {
+					const output = await runCommand(command, cwd);
+					return { ok: renderCommandBlock(command, output) };
+				} catch (error) {
+					return { error: error instanceof Error ? error.message : String(error) };
+				}
+			}
+			return { error: `Unrecognized injection token: ${raw}` };
+		}),
+	);
 
-	const missing: string[] = [];
+	const errors: string[] = [];
 	const parts: string[] = [];
 	let cursor = 0;
 
-	for (const match of matches) {
+	matches.forEach((match, index) => {
 		const [raw] = match;
-		const path = match[1] ?? match[2];
-		if (path === undefined) {
-			continue;
-		}
 		const start = match.index ?? 0;
 		parts.push(text.slice(cursor, start));
 
-		const contents = await load(path);
-		if (contents === null) {
-			missing.push(path);
-		} else {
-			parts.push(renderFileBlock(path, contents));
+		const result = resolved[index];
+		if (result && "error" in result) {
+			errors.push(result.error);
+		} else if (result) {
+			parts.push(result.ok);
 		}
 		cursor = start + raw.length;
-	}
+	});
 	parts.push(text.slice(cursor));
 
-	if (missing.length > 0) {
-		return { text: null, missing };
+	if (errors.length > 0) {
+		return { text: null, errors };
 	}
-	return { text: parts.join(""), missing: [] };
+	return { text: parts.join(""), errors: [] };
 }
+
+/** Backwards-compatible alias for the file-only injection entry point. */
+export const injectFiles = expandTokens;
 
 export default function (pi: ExtensionAPI) {
 	pi.on("input", async (event, ctx) => {
@@ -98,21 +165,22 @@ export default function (pi: ExtensionAPI) {
 			return { action: "continue" };
 		}
 
-		if (!event.text.includes(REFERENCE_PREFIX)) {
+		const text = event.text;
+		if (!text.includes(REFERENCE_PREFIX) && !text.includes(COMMAND_PREFIX)) {
 			return { action: "continue" };
 		}
 
-		const result = await injectFiles(event.text, ctx.cwd);
+		const result = await expandTokens(text, ctx.cwd);
 
-		if (result.missing.length > 0) {
-			const list = result.missing.map((path) => `  - ${path}`).join("\n");
+		if (result.errors.length > 0) {
+			const list = result.errors.map((message) => `  - ${message}`).join("\n");
 			ctx.ui.notify(
-				`File injection failed, files not found:\n${list}\n\nPress the up arrow key to edit the message and try again.`,
+				`Injection failed:\n${list}\n\nPress the up arrow key to edit the message and try again.`,
 				"error",
 			);
 			return { action: "handled" };
 		}
 
-		return { action: "transform", text: result.text ?? event.text };
+		return { action: "transform", text: result.text ?? text };
 	});
 }
