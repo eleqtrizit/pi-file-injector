@@ -1,64 +1,95 @@
-# pi Extension Template
+# pi-file-injector
 
-A starter repository for building extensions for the [pi coding agent](https://github.com/earendil-works/pi-coding-agent). It ships a working extension (`extensions/index.ts`) with a custom tool, an event handler, and a slash command, plus the TypeScript and test setup already wired up.
+A [pi coding agent](https://github.com/earendil-works/pi-coding-agent) extension that injects full file contents and command output directly into your prompt before it is sent to the LLM.
 
-## Getting Started
+Normally, mentioning a file just tells the agent to go read it with a tool call. With this extension, the actual content is placed inside the prompt itself. The agent never sees a file path or the marker syntax. The transformed prompt is what enters conversation history.
 
-Point your pi agent at this repo and ask:
+## Install
 
-> How do I get started?
-
-The agent reads `AGENTS.md` in this repo and will walk you through the setup: copying the template to a new directory, installing dependencies, and running the example extension.
-
-## What's Included
-
-```
-extensions/index.ts   Example extension: hello_world and echo tools, tool_call gate, /template command
-src/                  Source modules the extension imports
-tests/                Vitest tests (mirrors src/)
-package.json          pi-package metadata (main, pi.extensions)
-tsconfig.json         Strict TypeScript (ESNext, NodeNext); typecheck only, no build step
+```bash
+pi install https://github.com/eleqtrizit/pi-file-injector
 ```
 
-## Manual Steps (for reference)
+Restart pi (or run `/reload`) after installing.
 
-1. Copy the template to a new directory (Linux/macOS, skipping `.git` and `node_modules`):
+## Usage
 
-   ```bash
-   rsync -vrt --delete --delete-excluded --exclude node_modules --exclude .git ./ /path/to/new-repo/
-   ```
+### File injection: `#@path`
 
-2. `npm install` (or initialize from scratch: `npm init -y`, then `npm install --save-dev typescript vitest @types/node @earendil-works/pi-coding-agent && npm install typebox`).
-3. Keep `tsconfig.json` as-is (ESNext, NodeNext, strict). No build step needed; pi loads TypeScript via jiti. Use `npx tsc --noEmit` for typechecking.
-4. Check `package.json`: `main` and `pi.extensions` point at the entry point (`extensions/index.ts`), `keywords: ["pi-package"]`, `typebox` in `dependencies`, `@earendil-works/pi-coding-agent` as a peer.
-5. Edit `extensions/index.ts` (or replace it). The default export is a factory receiving `ExtensionAPI`.
-6. Test:
-
-   ```bash
-   npm run typecheck
-   pi -e ./extensions/index.ts     # quick manual test
-   npm test                        # vitest
-   ```
-
-   For auto-discovery and `/reload`, place extensions in `~/.pi/agent/extensions/` or project `.pi/extensions/`.
-7. Publish: update the version, then `npm publish`. Users install with `pi install npm:<name>`. Runtime deps must go in `dependencies` (pi installs with `--omit=dev`).
-
-Package names: `@earendil-works/pi-coding-agent` and `typebox` are current; `@mariozechner/pi-coding-agent` and `@sinclair/typebox` are obsolete.
-
-## Key APIs
-
-```ts
-pi.registerTool()      // custom tools the LLM can call
-pi.on(event, handler)  // session_start, session_shutdown, before_agent_start,
-                       // tool_call, tool_result, turn_start/turn_end, ...
-pi.registerCommand("name", {...})
+```text
+Look over #@somefile and tell me if there are misspellings.
 ```
 
-Every handler receives an `ExtensionContext` with `ctx.ui` (notify, setStatus, setWidget, select, confirm, input, editor), `ctx.sessionManager`, `ctx.cwd`, `ctx.mode`, and more.
+If `somefile` contains `hello wrld how ar you doing`, the LLM receives:
 
-## Documentation
+```text
+Look over
+<file path="somefile">
+hello wrld how ar you doing
+</file>
+and tell me if there are misspellings.
+```
 
-After `npm install`, docs and examples ship inside the pi package:
+Paths resolve relative to the directory where pi is running. Absolute paths also work. For paths containing spaces, use the quoted form:
 
-- Docs: `node_modules/@earendil-works/pi-coding-agent/docs/` (start with `extensions.md` and `writing-an-extension.md`)
-- Examples: `node_modules/@earendil-works/pi-coding-agent/examples/extensions/`
+```text
+Summarize #@"my notes file.txt" in three bullets.
+```
+
+### Command injection: `` #`command` ``
+
+```text
+Here is the diff of #@somefile against HEAD. Is #`git rev-parse --abbrev-ref HEAD` the right branch for it?
+```
+
+The command runs in the directory where pi is running, and the LLM receives:
+
+```text
+... against HEAD. Is
+<command>git rev-parse --abbrev-ref HEAD</command>
+<output>
+main
+</output>
+the right branch for it?
+```
+
+Both markers can be mixed freely in one message.
+
+## Errors
+
+If a referenced file does not exist, or a command fails, the message is not sent. A notification lists every problem at once:
+
+```text
+Injection failed:
+  - File not found: somefile
+
+Press the up arrow key to edit the message and try again.
+```
+
+Press the up arrow key to edit the message and retry. Nothing broken is injected into history.
+
+## Limits
+
+- Commands have a 30 second timeout and a 10MB output cap. A timeout stops the process and fails the message.
+- A command cannot contain a literal backtick. Nesting and escaping are not supported.
+- Commands run with your default shell. Only reference commands you trust.
+
+## Behavior details
+
+- Transformed text replaces your raw input in conversation history: the model never sees `#@` or `` #` `` markers. The command text itself is visible inside the `<command>` block.
+- Files are read once per mention, even when the same file appears several times.
+- Surrounding whitespace and line structure are preserved; the `<file>` or `<command>` block takes the marker's exact place in the text.
+- Messages injected by other extensions are not re-processed.
+
+## Development
+
+```bash
+npm install
+npm run typecheck   # tsc --noEmit
+npm test            # vitest
+pi -e ./extensions/index.ts   # run pi with the extension loaded directly
+```
+
+## License
+
+MIT
