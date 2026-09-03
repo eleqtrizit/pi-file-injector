@@ -24,6 +24,7 @@ import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { suggest, type FileCache } from "./completions.js";
 
 const execAsync = promisify(exec);
 
@@ -159,6 +160,38 @@ export async function expandTokens(text: string, cwd: string): Promise<Expansion
 export const injectFiles = expandTokens;
 
 export default function (pi: ExtensionAPI) {
+	pi.on("session_start", (_event, ctx) => {
+		if (!ctx.hasUI) {
+			return;
+		}
+
+		// Lazily refreshed path cache shared across keystrokes.
+		let fileCache: FileCache | undefined;
+
+		ctx.ui.addAutocompleteProvider((current) => ({
+			triggerCharacters: ["#"],
+			async getSuggestions(lines, cursorLine, cursorCol, options) {
+				const line = lines[cursorLine] ?? "";
+				const before = line.slice(0, cursorCol);
+
+				const result = await suggest(before, ctx.cwd, fileCache);
+				fileCache = result.cache;
+				if (options.signal.aborted || result.suggestions === null) {
+					return current.getSuggestions(lines, cursorLine, cursorCol, options);
+				}
+				return result.suggestions;
+			},
+
+			applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
+				return current.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
+			},
+
+			shouldTriggerFileCompletion(lines, cursorLine, cursorCol) {
+				return current.shouldTriggerFileCompletion?.(lines, cursorLine, cursorCol) ?? true;
+			},
+		}));
+	});
+
 	pi.on("input", async (event, ctx) => {
 		// Extension-injected messages have already been processed.
 		if (event.source === "extension") {

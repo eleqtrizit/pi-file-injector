@@ -68,6 +68,10 @@ Press the up arrow key to edit the message and try again.
 
 Press the up arrow key to edit the message and retry. Nothing broken is injected into history.
 
+## Autocomplete
+
+Type `#@` and completion suggestions appear, the same way `@` completes paths. Suggestions are fuzzy-filtered file and directory paths from the directory where pi is running (`node_modules`, `.git`, and `.pi` are excluded). Accepting a directory suggestion appends `/` so you can keep completing the next segment. For paths with spaces, use the quoted form `#@"` and the inserted token is quoted automatically.
+
 ## Limits
 
 - Commands have a 30 second timeout and a 10MB output cap. A timeout stops the process and fails the message.
