@@ -13,7 +13,7 @@
  * Example:
  *   Input:  "Look over #@notes.md and run #`git status`"
  *   Sent:   "Look over <file path="notes.md">...</file> and run
- *            <command>git status</command><output>...</output>"
+ *            <command>\n<exec>git status</exec>\n<output>...\n</output>\n</command>"
  *
  * If a file does not exist or a command fails, the send is cancelled with an
  * error notification; the user can press arrow-up to edit the message and
@@ -53,10 +53,10 @@ function renderFileBlock(path: string, contents: string): string {
 	return `<file path="${path}">\n${contents}\n</file>`;
 }
 
-/** Wraps a command and its output in `<command>`/`<output>` blocks. */
+/** Wraps a command and its output in a nested `<command>` block. */
 function renderCommandBlock(command: string, output: string): string {
 	const trimmed = output.length > 0 && !output.endsWith("\n") ? `${output}\n` : output;
-	return `<command>${command}</command>\n<output>\n${trimmed}</output>`;
+	return `<command>\n<exec>${command}</exec>\n<output>\n${trimmed}</output>\n</command>`;
 }
 
 /** Resolves a file reference to its contents, or null when unreadable. */

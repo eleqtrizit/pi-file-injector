@@ -121,7 +121,7 @@ describe("command injection", () => {
 		const result = await expandTokens(`Branch info: #\`${command}\``, cwd);
 		expect(result.errors).toEqual([]);
 		expect(result.text).toBe(
-			`Branch info: \n<command>${command}</command>\n<output>\ninjected-output\n</output>`,
+			`Branch info: \n<command>\n<exec>${command}</exec>\n<output>\ninjected-output\n</output>\n</command>`,
 		);
 	});
 
@@ -151,7 +151,7 @@ describe("command injection", () => {
 		}
 		const result = await expandTokens(`#\`${command}\``, cwd);
 		expect(result.errors).toEqual([]);
-		expect(result.text).toBe(`<command>${command}</command>\n<output>\nhi\n</output>`);
+		expect(result.text).toBe(`<command>\n<exec>${command}</exec>\n<output>\nhi\n</output>\n</command>`);
 	});
 
 	it("fails the whole prompt for a failing command", async () => {
@@ -184,7 +184,7 @@ describe("command injection", () => {
 		);
 		expect(result.errors).toEqual([]);
 		expect(result.text).toContain('<file path="notes.md">\nnotes body\n</file>');
-		expect(result.text).toContain("<command>echo combined</command>");
+		expect(result.text).toContain("<exec>echo combined</exec>");
 		const text = result.text ?? "";
 		expect(text.indexOf("<file")).toBeLessThan(text.indexOf("<command"));
 	});

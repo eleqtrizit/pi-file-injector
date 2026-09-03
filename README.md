@@ -46,10 +46,12 @@ The command runs in the directory where pi is running, and the LLM receives:
 
 ```text
 ... against HEAD. Is
-<command>git rev-parse --abbrev-ref HEAD</command>
+<command>
+<exec>git rev-parse --abbrev-ref HEAD</exec>
 <output>
 main
 </output>
+</command>
 the right branch for it?
 ```
 
@@ -80,7 +82,7 @@ Type `#@` and completion suggestions appear, the same way `@` completes paths. S
 
 ## Behavior details
 
-- Transformed text replaces your raw input in conversation history: the model never sees `#@` or `` #` `` markers. The command text itself is visible inside the `<command>` block.
+- Transformed text replaces your raw input in conversation history: the model never sees `#@` or `` #` `` markers. The command text itself is visible inside the `<exec>` element of the `<command>` block.
 - Files are read once per mention, even when the same file appears several times.
 - Surrounding whitespace and line structure are preserved; the `<file>` or `<command>` block takes the marker's exact place in the text and always starts on its own line (no double blank line when the marker is already at the start of one).
 - Messages injected by other extensions are not re-processed.
