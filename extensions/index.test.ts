@@ -34,7 +34,7 @@ describe("expandTokens", () => {
 		);
 		expect(result.errors).toEqual([]);
 		expect(result.text).toBe(
-			'Look over <file path="somefile">\nhello wrld how ar you doing\n</file> and tell me if there are misspellings.',
+			'Look over \n<file path="somefile">\nhello wrld how ar you doing\n</file> and tell me if there are misspellings.',
 		);
 	});
 
@@ -121,7 +121,7 @@ describe("command injection", () => {
 		const result = await expandTokens(`Branch info: #\`${command}\``, cwd);
 		expect(result.errors).toEqual([]);
 		expect(result.text).toBe(
-			`Branch info: <command>${command}</command>\n<output>\ninjected-output\n</output>`,
+			`Branch info: \n<command>${command}</command>\n<output>\ninjected-output\n</output>`,
 		);
 	});
 

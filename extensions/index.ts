@@ -144,6 +144,12 @@ export async function expandTokens(text: string, cwd: string): Promise<Expansion
 		if (result && "error" in result) {
 			errors.push(result.error);
 		} else if (result) {
+			// Keep the block on its own line, but avoid a double newline when
+			// the marker already sits at the start of a line.
+			const previousChar = parts.length > 0 ? parts.at(-1)?.at(-1) : undefined;
+			if (result.ok.startsWith("<") && previousChar !== undefined && previousChar !== "\n") {
+				parts.push("\n");
+			}
 			parts.push(result.ok);
 		}
 		cursor = start + raw.length;

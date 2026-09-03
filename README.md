@@ -82,7 +82,7 @@ Type `#@` and completion suggestions appear, the same way `@` completes paths. S
 
 - Transformed text replaces your raw input in conversation history: the model never sees `#@` or `` #` `` markers. The command text itself is visible inside the `<command>` block.
 - Files are read once per mention, even when the same file appears several times.
-- Surrounding whitespace and line structure are preserved; the `<file>` or `<command>` block takes the marker's exact place in the text.
+- Surrounding whitespace and line structure are preserved; the `<file>` or `<command>` block takes the marker's exact place in the text and always starts on its own line (no double blank line when the marker is already at the start of one).
 - Messages injected by other extensions are not re-processed.
 
 ## Development
