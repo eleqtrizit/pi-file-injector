@@ -83,4 +83,16 @@ describe("injectFiles", () => {
 		const result = await injectFiles("#@empty.txt", cwd);
 		expect(result.text).toBe('<file path="empty.txt">\n\n</file>');
 	});
+
+	it("supports quoted paths containing spaces", async () => {
+		await writeFile(join(cwd, "my file.txt"), "spaced contents");
+		const result = await injectFiles('#@"my file.txt" placeholder', cwd);
+		expect(result.text).toContain("placeholder");
+	});
+
+	it("reports missing quoted paths", async () => {
+		const result = await injectFiles('#@"no such file.txt"', cwd);
+		expect(result.text).toBeNull();
+		expect(result.missing).toEqual(["no such file.txt"]);
+	});
 });

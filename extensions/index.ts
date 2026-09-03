@@ -2,8 +2,8 @@
  * File injector extension.
  *
  * Injects the full contents of a file into the user prompt at send time.
- * Any text matching `#<path>` is replaced by a `<file>` block containing the
- * file contents. The agent never sees the raw `#@` reference; the transformed
+ * Any text matching `#@path` is replaced by a `<file>` block containing the
+ * file contents. Paths containing spaces use the quoted form: `#@"my file.txt"`. The agent never sees the raw `#@` reference; the transformed
  * text is what goes into conversation history.
  *
  * Example:
@@ -20,8 +20,12 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 /** Marker that starts a file reference in the user's input. */
 const REFERENCE_PREFIX = "#@";
 
-/** Matches a single file reference, e.g. `#@src/utils/foo.ts`. */
-const REFERENCE_PATTERN = /#@(\S+)/g;
+/**
+ * Matches a single file reference, e.g. `#@src/utils/foo.ts` or
+ * `#@"my file.txt"` (quoted form for paths containing spaces).
+ * The path is capture group 1 (quoted) or 2 (unquoted).
+ */
+const REFERENCE_PATTERN = /#@"([^"]+)"|#@(\S+)/g;
 
 /** Wraps file contents in a `<file>` block for the LLM. */
 function renderFileBlock(path: string, contents: string): string {
@@ -63,7 +67,11 @@ export async function injectFiles(text: string, cwd: string): Promise<InjectionR
 	let cursor = 0;
 
 	for (const match of matches) {
-		const [raw, path] = match;
+		const [raw] = match;
+		const path = match[1] ?? match[2];
+		if (path === undefined) {
+			continue;
+		}
 		const start = match.index ?? 0;
 		parts.push(text.slice(cursor, start));
 
