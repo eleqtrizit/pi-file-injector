@@ -76,7 +76,8 @@ Type `#@` and completion suggestions appear, the same way `@` completes paths. S
 
 ## Limits
 
-- Commands have a 30 second timeout and a 10MB output cap. A timeout stops the process and fails the message.
+- Injected file contents and command output are capped at 2500 lines each. The head is kept, and a marker line (`[...truncated: showing 2500 of N lines...]`) tells the model what was cut. Content at 2500 lines or fewer is passed through untouched.
+- Commands have a 30 second timeout. A timeout stops the process and fails the message. As a byte-level backstop, a command producing more than 10MB of output is killed (rare: one giant line); this also fails the message.
 - A command cannot contain a literal backtick. Nesting and escaping are not supported.
 - Commands run with your default shell. Only reference commands you trust.
 

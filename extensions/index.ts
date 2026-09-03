@@ -37,7 +37,11 @@ const COMMAND_PREFIX = "#`";
 /** Maximum time a command may run before it is killed. */
 const COMMAND_TIMEOUT_MS = 30_000;
 
-/** Maximum captured command output in bytes before the process is killed. */
+/**
+ * Byte backstop for command output (the process is killed beyond this).
+ * Prompt size is governed by the MAX_LINES cap; this only guards against a
+ * pathological single-line output exhausting memory.
+ */
 const COMMAND_MAX_BUFFER = 10 * 1024 * 1024;
 
 /**
@@ -48,15 +52,35 @@ const COMMAND_MAX_BUFFER = 10 * 1024 * 1024;
  */
 const TOKEN_PATTERN = /#@"([^"]+)"|#@(\S+)|#`([^`]+)`/g;
 
+/** Maximum number of lines injected from a file or command output. */
+export const MAX_LINES = 2500;
+
+/**
+ * Caps content at MAX_LINES lines, keeping the head. The marker tells the
+ * model exactly how much was cut.
+ */
+export function truncateLines(content: string): string {
+	const lines = content.split("\n");
+	// A trailing newline produces an empty final element that is not a line.
+	const lineCount = lines.length > 1 && lines.at(-1) === "" ? lines.length - 1 : lines.length;
+	if (lineCount <= MAX_LINES) {
+		return content;
+	}
+	const kept = lines.slice(0, MAX_LINES).join("\n");
+	return `${kept}\n[...truncated: showing ${MAX_LINES} of ${lineCount} lines...]`;
+}
+
 /** Wraps file contents in a `<file>` block for the LLM. */
 function renderFileBlock(path: string, contents: string): string {
-	return `<file path="${path}">\n${contents}\n</file>`;
+	return `<file path="${path}">\n${truncateLines(contents)}\n</file>`;
 }
 
 /** Wraps a command and its output in a nested `<command>` block. */
 function renderCommandBlock(command: string, output: string): string {
 	const trimmed = output.length > 0 && !output.endsWith("\n") ? `${output}\n` : output;
-	return `<command>\n<exec>${command}</exec>\n<output>\n${trimmed}</output>\n</command>`;
+	const body = truncateLines(trimmed);
+	const withTrailingNewline = body.endsWith("\n") ? body : `${body}\n`;
+	return `<command>\n<exec>${command}</exec>\n<output>\n${withTrailingNewline}</output>\n</command>`;
 }
 
 /** Resolves a file reference to its contents, or null when unreadable. */

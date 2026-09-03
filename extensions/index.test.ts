@@ -92,6 +92,32 @@ describe("expandTokens", () => {
 		expect(result.text).toBe('<file path="empty.txt">\n\n</file>');
 	});
 
+	it("truncates files beyond 2500 lines with a marker", async () => {
+		await writeFile(join(cwd, "big.txt"), Array.from({ length: 3000 }, (_, index) => `line ${index}`).join("\n"));
+		const result = await expandTokens("#@big.txt", cwd);
+		expect(result.errors).toEqual([]);
+		expect(result.text).toContain("line 0\n");
+		expect(result.text).toContain("line 2499\n");
+		expect(result.text).not.toContain("line 2500\n");
+		expect(result.text).toContain("[...truncated: showing 2500 of 3000 lines...]");
+	});
+
+	it("keeps content at exactly 2500 lines untruncated", async () => {
+		await writeFile(join(cwd, "edge.txt"), Array.from({ length: 2500 }, (_, index) => `l${index}`).join("\n"));
+		const result = await expandTokens("#@edge.txt", cwd);
+		expect(result.text).not.toContain("truncated");
+	});
+
+	it("truncates command output beyond 2500 lines", async () => {
+		if (process.platform === "win32") {
+			return;
+		}
+		const command = "seq 3000";
+		const result = await expandTokens(`#\`${command}\``, cwd);
+		expect(result.errors).toEqual([]);
+		expect(result.text).toMatch(/<output>\n1\n[\s\S]*\n2500\n\[\.\.\.truncated: showing 2500 of 3000 lines\.\.\.\]\n<\/output>/);
+	});
+
 	it("supports quoted paths containing spaces", async () => {
 		await writeFile(join(cwd, "my file.txt"), "spaced contents");
 		const result = await expandTokens('#@"my file.txt" placeholder', cwd);
